@@ -1,0 +1,63 @@
+# -*- mode: ruby -*-
+# vi: set ft=ruby :
+
+Vagrant.configure("2") do |config|
+  config.vm.box = "centos/8"
+  config.vm.box_version = "1905.1"
+  config.vm.hostname = 'k8s-dev'
+  config.vm.define vm_name = 'k8s'
+  
+  config.vm.provision "shell", privileged: false, inline: <<-SHELL
+
+    # change the source.list
+    sudo dnf -y update
+    sudo dnf install -y vim git cmake tcpdump jq socat bash-completion
+    sudo dnf groupinstall -y 'Development Tools'
+
+    # Install Docker
+    sudo dnf config-manager --add-repo=https://download.docker.com/linux/centos/docker-ce.repo
+    sudo dnf install docker-ce --nobest -y
+    sudo usermod -aG docker $USER
+    sudo systemctl start docker
+    sudo systemctl enable docker
+
+    # Disable swap
+    sudo swapoff -a && sudo sed -i '/ swap / s/^/#/' /etc/fstab
+
+    sudo bash -c 'cat <<EOF > /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=http://yum.kubernetes.io/repos/kubernetes-el7-x86_64
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://packages.cloud.google.com/yum/doc/yum-key.gpg
+       https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+EOF'
+    export KUBE_VERSION="1.18.8"
+    sudo dnf install -y kubelet-${KUBE_VERSION} kubeadm-${KUBE_VERSION} kubectl-${KUBE_VERSION}
+
+    sudo kubeadm init --pod-network-cidr=10.244.0.0/16
+    mkdir -p $HOME/.kube
+    sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+    sudo chown $(id -u):$(id -g) $HOME/.kube/config
+
+    sudo systemctl enable kubelet && sudo systemctl start kubelet
+
+    kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/2140ac876ef134e0ed5af15c65e414cf26827915/Documentation/kube-flannel.yml
+
+    git clone --depth=1 https://github.com/Bash-it/bash-it.git ~/.bash_it
+    bash ~/.bash_it/install.sh -s
+
+    echo 'source <(kubectl completion bash)' >> ~/.bashrc
+    kubectl taint nodes k8s-dev node-role.kubernetes.io/master:NoSchedule-
+  SHELL
+
+  config.vm.network :private_network, ip: "172.17.8.115"
+  config.vm.provider :virtualbox do |v|
+      v.name = "k8s"
+      v.customize ["modifyvm", :id, "--cpus", 2]
+      v.customize ["modifyvm", :id, "--memory", 4096]
+      v.customize ['modifyvm', :id, '--nicpromisc1', 'allow-all']
+  end
+end
