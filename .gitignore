@@ -10,3 +10,4 @@ desktop.ini
 
 # Vagrant
 .vagrant/
+**/*.swp
